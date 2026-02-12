@@ -115,7 +115,6 @@ pub async fn pack(options: PackOptions) -> Result<()> {
 
     let channel_dir = output_folder.path().join(CHANNEL_DIRECTORY_NAME);
     let pypi_directory = output_folder.path().join(PYPI_DIRECTORY_NAME);
-    let injected_files_dir = output_folder.path().join("injected");
 
     let mut conda_packages_from_lockfile: Vec<CondaBinaryData> = Vec::new();
     let mut pypi_packages_from_lockfile: Vec<PypiPackageData> = Vec::new();
@@ -179,8 +178,7 @@ pub async fn pack(options: PackOptions) -> Result<()> {
         conda_packages.push((filename, package.package_record));
     }
 
-    // Conda-style injected packages (.conda, .tar.bz2)
-    let injected_conda_packages: Vec<(PathBuf, ArchiveType)> = options
+    let injected_packages: Vec<(PathBuf, ArchiveType)> = options
         .injected_packages
         .iter()
         .filter_map(|e| {
@@ -189,20 +187,8 @@ pub async fn pack(options: PackOptions) -> Result<()> {
         })
         .collect();
 
-    // Generic injected files (everything else)
-    let injected_generic_files: Vec<PathBuf> = options
-        .injected_packages
-        .iter()
-        .filter(|e| {
-            ArchiveType::split_str(e.as_path().to_string_lossy().as_ref()).is_none()
-                && e.extension().map(|x| x != "whl").unwrap_or(true)
-        })
-        .cloned()
-        .collect();
-
-
-        tracing::info!("Injecting {} conda packages", injected_conda_packages.len());
-        for (path, archive_type) in injected_conda_packages.iter() {
+    tracing::info!("Injecting {} packages", injected_packages.len());
+    for (path, archive_type) in injected_packages.iter() {
         // step 1: Derive PackageRecord from index.json inside the package
         let package_record = match archive_type {
             ArchiveType::TarBz2 => package_record_from_tar_bz2(path),
@@ -227,7 +213,7 @@ pub async fn pack(options: PackOptions) -> Result<()> {
 
     // In case we injected packages, we need to validate that these packages are solvable with the
     // environment (i.e., that each packages dependencies and run constraints are still satisfied).
-    if !injected_conda_packages.is_empty() {
+    if !injected_packages.is_empty() {
         PackageRecord::validate(conda_packages.iter().map(|(_, p)| p.clone()).collect())?;
     }
 
@@ -313,35 +299,6 @@ pub async fn pack(options: PackOptions) -> Result<()> {
 
         pypi_packages_from_lockfile.push(pypi_data.clone());
     }
-
-    // Inject generic source files (tar.gz, zip, anything)
-    tracing.info!(
-        "Injecting {} generic files",
-        injected_generic_files.len()
-    );
-    if !injected_generic_files.is_empty() {
-        tracing::info!(
-            "Injecting {} generic files",
-            injected_generic_files.len()
-        );
-
-        create_dir_all(&injected_files_dir)
-            .await
-            .map_err(|e| anyhow!("could not create injected files directory: {}", e))?;
-
-        for file_path in injected_generic_files {
-            let filename = file_path
-                .file_name()
-                .ok_or(anyhow!("could not get injected file name"))?;
-
-            tracing::info!("Injecting file: {:?}", filename);
-
-            fs::copy(&file_path, injected_files_dir.join(filename))
-                .await
-                .map_err(|e| anyhow!("could not copy injected file: {}", e))?;
-        }
-    }
-
 
     // Create `repodata.json` files.
     tracing::info!("Creating repodata.json files");
